@@ -112,11 +112,6 @@ namespace MeshToGeoConverter
         private void MakeTopologyContent(StringBuilder sb)
         {
             var indices = _mesh.triangles;
-            // var chunkSize = 3;
-            // var reversedIndices = indices.Select((v, i) => new { v, i })
-            //     .GroupBy(x => x.i / chunkSize)
-            //     .Select(g => g.Reverse())
-            //     .SelectMany(g => g.Select(x => x.v));
             sb.AppendLine("\"topology\",[");
             sb.AppendLine("\"pointref\",[");
             sb.AppendLine($"\"indices\",[{string.Join(",", indices)}]");
