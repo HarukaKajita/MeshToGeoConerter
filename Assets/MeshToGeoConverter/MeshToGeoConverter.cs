@@ -54,6 +54,7 @@ namespace MeshToGeoConverter
             var triangleCount = _mesh.triangles.Length / 3;
             var materials = new List<string>(triangleCount);
             var meshNames = new List<string>(triangleCount);
+            var subMeshId = new int[triangleCount,1];
             for (var i = 0; i < subMeshCount; i++)
             {
                 var material = meshRenderer.sharedMaterials[i].name;
@@ -63,14 +64,17 @@ namespace MeshToGeoConverter
                 {
                     materials.Add(material);
                     meshNames.Add(meshName);
+                    subMeshId[j,0] = i;
                 }
             }
             var materialAttribute = new StringAttribute("materialName");
             var meshNameAttribute = new StringAttribute("meshName");
+            var subMeshIdAttribute = new IntAttribute("subMeshId", subMeshId);
             materialAttribute.SetValues(materials.ToArray());
             meshNameAttribute.SetValues(meshNames.ToArray());
             PrimitiveAttributes.Add(materialAttribute);
             PrimitiveAttributes.Add(meshNameAttribute);
+            PrimitiveAttributes.Add(subMeshIdAttribute);
         }
 
         public void SaveAsGeo(string path)
