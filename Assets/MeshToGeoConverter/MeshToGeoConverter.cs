@@ -37,6 +37,8 @@ namespace MeshToGeoConverter
             var remappedIndices = new int[verts.Length];
             if (!outputNaively)
             {
+                // ComputeShaderで高速に重複頂点の判定をする改善が可能
+                
                 // 頂点座標の重複を削除
                 for (var i = 0; i < verts.Length; i++)
                 {
@@ -44,16 +46,14 @@ namespace MeshToGeoConverter
                     for (var index = 0; index < distinctPositions.Count; index++)
                     {
                         var p = distinctPositions[index];
-                        if (weldThreshold < Math.Abs(p.x - verts[i].x)) continue;
-                        if (weldThreshold < Math.Abs(p.y - verts[i].y)) continue;
-                        if (weldThreshold < Math.Abs(p.z - verts[i].z)) continue;
+                        if (weldThreshold < Vector3.Distance(p, verts[i])) continue;
                         // ほぼ同値の場合
                         remappedIndices[i] = index;
                         alreadyExists = true;
                         break;
                     }
                     if (alreadyExists) continue;
-
+                
                     remappedIndices[i] = distinctPositions.Count;
                     distinctPositions.Add(verts[i]);
                 }
