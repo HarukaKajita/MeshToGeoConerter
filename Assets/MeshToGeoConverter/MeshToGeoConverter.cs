@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using UnityEditor;
 using UnityEngine;
 
 namespace MeshToGeoConverter
@@ -17,7 +18,7 @@ namespace MeshToGeoConverter
         private int[] indices;
         private int pointCount = 0;
         bool outputNaively = false;
-        public MeshToGeoConverter(MeshRenderer meshRenderer, bool outputNaively = false, float weldThreshold = float.Epsilon)
+        public MeshToGeoConverter(MeshRenderer meshRenderer, bool exportInWorldSpace, bool outputNaively = true, float weldThreshold = float.Epsilon)
         {
             this.outputNaively = outputNaively;
             if (meshRenderer == null)
@@ -29,10 +30,12 @@ namespace MeshToGeoConverter
             _mesh = filter.sharedMesh;
             var verts = _mesh.vertices;
             var norms = _mesh.normals;
-            var positions = new float[,]{};
-            var normals = outputNaively ? new float[verts.Length, 3] : new float[_mesh.triangles.Length, 3];
+            var basMeshUV = _mesh.uv;
+            float[,] positions;
+            float[,] normals;
+            float[,] uv0S;
             indices = _mesh.triangles;
-
+            
             var distinctPositions = new List<Vector3>();
             var remappedIndices = new int[verts.Length];
             if (!outputNaively)
@@ -62,16 +65,30 @@ namespace MeshToGeoConverter
                 positions = new float[pointCount, 3];
                 for (var i = 0; i < distinctPositions.Count; i++)
                 {
-                    positions[i, 0] = -distinctPositions[i].x;
-                    positions[i, 1] = distinctPositions[i].y;
-                    positions[i, 2] = distinctPositions[i].z;
+                    var v = verts[i];
+                    if (exportInWorldSpace) v = GetWorldPosition(v);
+                    positions[i, 0] = -v.x;
+                    positions[i, 1] = v.y;
+                    positions[i, 2] = v.z;
                 }
                 // 頂点法線のコピー
-                for (var i = 0; i < indices.Length; i++)
+                var vertexCount = _mesh.vertexCount;
+                normals = new float[vertexCount, 3];
+                for (var i = 0; i < vertexCount; i++)
                 {   
-                    normals[i, 0] = -norms[indices[i]].x;
-                    normals[i, 1] = norms[indices[i]].y;
-                    normals[i, 2] = norms[indices[i]].z;
+                    var dir = norms[indices[i]];
+                    if (exportInWorldSpace) dir = GetWorldDirection(dir);
+                    normals[i, 0] = -dir.x;
+                    normals[i, 1] = dir.y;
+                    normals[i, 2] = dir.z;
+                }
+                uv0S = new float[vertexCount, 3];
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    var uv = basMeshUV[indices[i]];
+                    uv0S[i, 0] = uv.x;
+                    uv0S[i, 1] = uv.y;
+                    uv0S[i, 2] = 0;
                 }
                 // remap indices
                 for (var i = 0; i < indices.Length; i++)
@@ -84,16 +101,29 @@ namespace MeshToGeoConverter
                 // 頂点座標の重複を削除せずにそのままコピー
                 for (var i = 0; i < pointCount; i++)
                 {
-                    positions[i, 0] = -verts[i].x;
-                    positions[i, 1] = verts[i].y;
-                    positions[i, 2] = verts[i].z;
+                    var v = verts[i];
+                    if (exportInWorldSpace) v = GetWorldPosition(v);
+                    positions[i, 0] = -v.x;
+                    positions[i, 1] = v.y;
+                    positions[i, 2] = v.z;
                 }
                 // 頂点法線のコピー
+                normals = new float[pointCount, 3];
                 for (var i = 0; i < pointCount; i++)
-                {   
-                    normals[i, 0] = -norms[i].x;
-                    normals[i, 1] = norms[i].y;
-                    normals[i, 2] = norms[i].z;
+                {
+                    var dir = norms[i];
+                    if (exportInWorldSpace) dir = GetWorldDirection(dir);
+                    normals[i, 0] = -dir.x;
+                    normals[i, 1] = dir.y;
+                    normals[i, 2] = dir.z;
+                }
+                uv0S = new float[pointCount, 3];
+                for (var i = 0; i < pointCount; i++)
+                {
+                    var uv = basMeshUV[i];
+                    uv0S[i, 0] = uv.x;
+                    uv0S[i, 1] = uv.y;
+                    uv0S[i, 2] = 0;
                 }
             }
             
@@ -104,6 +134,9 @@ namespace MeshToGeoConverter
             if(outputNaively) PointAttributes.Add(new FloatAttribute("N", normals));
             else  VertexAttributes.Add(new FloatAttribute("N", normals));
             
+            if(outputNaively) PointAttributes.Add(new FloatAttribute("uv", uv0S));
+            else  VertexAttributes.Add(new FloatAttribute("Nuv", uv0S));
+            
             // primitive attributes
             var subMeshTriangleCount = new int[_mesh.subMeshCount];
             var subMeshCount = _mesh.subMeshCount;
@@ -113,29 +146,96 @@ namespace MeshToGeoConverter
             var triangleCount = _mesh.triangles.Length / 3;
             var materials = new List<string>(triangleCount);
             var meshNames = new List<string>(triangleCount);
+            var castShadows = new List<string>(triangleCount);
+            var mainTexturePaths = new List<string>(triangleCount);
+            var normalMapPaths = new List<string>(triangleCount);
+            var baseColors = new float[triangleCount,4];
+            var metallics = new float[triangleCount,1];
             var subMeshId = new int[triangleCount,1];
             for (var i = 0; i < subMeshCount; i++)
             {
-                var material = meshRenderer.sharedMaterials[i].name;
+                var material = meshRenderer.sharedMaterials[i];
                 var meshName = _mesh.name;
                 var triCount = subMeshTriangleCount[i];
                 for (var j = 0; j < triCount; j++)
                 {
-                    materials.Add(material);
+                    materials.Add(material?.name);
                     meshNames.Add(meshName);
                     subMeshId[j,0] = i;
+                    castShadows.Add(meshRenderer.shadowCastingMode.ToString());
+                    var mainTexturePath = "";
+                    if (material != null)
+                    {
+                        if (material.HasTexture("_MainTex"))
+                            mainTexturePath = TextureAbsolutePath(material.GetTexture("_MainTex"));
+                        else if (material.HasTexture("_BaseMap"))
+                            mainTexturePath = TextureAbsolutePath(material.GetTexture("_BaseMap"));
+                    }
+                    mainTexturePaths.Add(mainTexturePath);
+                    
+                    var normalMapPath = "";
+                    if (material != null)
+                    {
+                        if (material.HasTexture("_NormalMap"))
+                            normalMapPath = TextureAbsolutePath(material.GetTexture("_NormalMap"));
+                        else if (material.HasTexture("_BumpMap"))
+                            normalMapPath = TextureAbsolutePath(material.GetTexture("_BumpMap"));
+                    }
+                    normalMapPaths.Add(normalMapPath);
+                
+                    var color = Color.white;
+                    if (material != null)
+                    {
+                        if (material.HasColor("_BaseColor")) color = material.GetColor("_BaseColor");
+                        else if (material.HasColor("_Color")) color = material.GetColor("_Color");
+                    }
+                    baseColors[j, 0] = color.r;
+                    baseColors[j, 1] = color.g;
+                    baseColors[j, 2] = color.b;
+                    baseColors[j, 3] = color.a;
+                    
+                    if (material != null)
+                        metallics[j, 0] = material.HasFloat("_Metallic") ? material.GetFloat("_Metallic") : 0;
                 }
             }
-            var materialAttribute = new StringAttribute("shop_materialpath");
-            var meshNameAttribute = new StringAttribute("meshName");
+            var materialAttribute = new StringAttribute("shop_materialpath", materials.ToArray());
+            var meshNameAttribute = new StringAttribute("meshName", meshNames.ToArray());
+            var castShadowAttribute = new StringAttribute("castShadow", castShadows.ToArray());
             var subMeshIdAttribute = new IntAttribute("subMeshId", subMeshId);
-            materialAttribute.SetValues(materials.ToArray());
-            meshNameAttribute.SetValues(meshNames.ToArray());
+            var mainTexturePathAttribute = new StringAttribute("baseMap", mainTexturePaths.ToArray());
+            var normalMapPathAttribute = new StringAttribute("normalMap", normalMapPaths.ToArray());
+            var baseColorAttribute = new FloatAttribute("baseColor", baseColors);
+            var metallicAttribute = new FloatAttribute("metallic", metallics);
             PrimitiveAttributes.Add(materialAttribute);
             PrimitiveAttributes.Add(meshNameAttribute);
+            PrimitiveAttributes.Add(castShadowAttribute);
             PrimitiveAttributes.Add(subMeshIdAttribute);
+            PrimitiveAttributes.Add(mainTexturePathAttribute);
+            PrimitiveAttributes.Add(normalMapPathAttribute);
+            PrimitiveAttributes.Add(baseColorAttribute);
+            PrimitiveAttributes.Add(metallicAttribute);
         }
-
+        
+        Vector3 GetWorldPosition(Vector3 localPosition)
+        {
+            return _meshRenderer.transform.TransformPoint(localPosition);
+        }
+        Vector3 GetWorldDirection(Vector3 localDirection)
+        {
+            return _meshRenderer.transform.TransformDirection(localDirection);
+        }
+        string TextureAbsolutePath(Texture texture)
+        {
+            if (texture == null) return "";
+            var path = AssetDatabase.GetAssetPath(texture);
+            return AssetPathToAbsolutePath(path);
+        }
+        string AssetPathToAbsolutePath(string assetPath)
+        {
+            if(assetPath.Length < 7) return "";
+            assetPath = assetPath[7..];
+            return $"{Application.dataPath}/{assetPath}";
+        }
         public void SaveAsGeo(string path)
         {
             if (_meshRenderer == null)

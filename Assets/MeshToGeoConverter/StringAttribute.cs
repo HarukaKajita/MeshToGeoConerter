@@ -10,15 +10,12 @@ namespace MeshToGeoConverter
 		private string[] _strings;
 		// elementId
 		private int[] _indices;
-		public StringAttribute(string name)
+		public StringAttribute(string name, string[] values)
 		{
 			this.name = name;
 			storage = Storage.int32;
 			isNumeric = false;
-		}
-		
-		public void SetValues(string[] values)
-		{
+			
 			_strings = values.Distinct().ToArray();
 			_indices = values.Select(v => Array.IndexOf(_strings, v)).ToArray();
 			size = 1;
