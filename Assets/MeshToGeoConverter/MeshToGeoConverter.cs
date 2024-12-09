@@ -28,6 +28,10 @@ namespace MeshToGeoConverter
             _meshRenderer = meshRenderer;
             var filter = _meshRenderer.GetComponent<MeshFilter>();
             _mesh = filter.sharedMesh;
+            if(_mesh == null)
+                throw new ArgumentException($"{meshRenderer.name}:Mesh is null");
+            if(_mesh.vertices == null || _mesh.vertices.Length == 0)
+                throw new ArgumentException($"{meshRenderer.name} {_mesh.name}: Mesh has no vertices");
             var verts = _mesh.vertices;
             var norms = _mesh.normals;
             var basMeshUV = _mesh.uv;
@@ -151,52 +155,44 @@ namespace MeshToGeoConverter
             var normalMapPaths = new List<string>(triangleCount);
             var baseColors = new float[triangleCount,4];
             var metallics = new float[triangleCount,1];
+            var smoothness = new float[triangleCount,1];
+            var renderQueues = new int[triangleCount,1];
             var subMeshId = new int[triangleCount,1];
+            var shadowCast = meshRenderer.shadowCastingMode.ToString();
+            
+            var accumulatedTriangleCount = 0;
             for (var i = 0; i < subMeshCount; i++)
             {
                 var material = meshRenderer.sharedMaterials[i];
                 var meshName = _mesh.name;
+                var materialName = material?.name;
                 var triCount = subMeshTriangleCount[i];
+                var baseMapPath = MaterialTextureAbsolutePath(material, new[] { "_BaseMap", "_MainTex" });
+                var normalMapPath = MaterialTextureAbsolutePath(material, new[] {"_NormalMap", "_BumpMap"});
+                var color = MaterialColor(material, new[] {"_BaseColor", "_Color"});
+                var metallic = MaterialFloat(material, new[] { "_Metallic" });
+                var smoothnes = MaterialFloat(material, new[] { "_Smoothness" });
+                var renderQueue = MaterialQueue(material);
+                if (renderQueue <= 0)
+                    Debug.LogWarning($"{material.name} : {renderQueue}");
                 for (var j = 0; j < triCount; j++)
                 {
-                    materials.Add(material?.name);
+                    var triIndex = accumulatedTriangleCount + j;
+                    materials.Add(materialName);
                     meshNames.Add(meshName);
-                    subMeshId[j,0] = i;
-                    castShadows.Add(meshRenderer.shadowCastingMode.ToString());
-                    var mainTexturePath = "";
-                    if (material != null)
-                    {
-                        if (material.HasTexture("_MainTex"))
-                            mainTexturePath = TextureAbsolutePath(material.GetTexture("_MainTex"));
-                        else if (material.HasTexture("_BaseMap"))
-                            mainTexturePath = TextureAbsolutePath(material.GetTexture("_BaseMap"));
-                    }
-                    mainTexturePaths.Add(mainTexturePath);
-                    
-                    var normalMapPath = "";
-                    if (material != null)
-                    {
-                        if (material.HasTexture("_NormalMap"))
-                            normalMapPath = TextureAbsolutePath(material.GetTexture("_NormalMap"));
-                        else if (material.HasTexture("_BumpMap"))
-                            normalMapPath = TextureAbsolutePath(material.GetTexture("_BumpMap"));
-                    }
+                    subMeshId[triIndex,0] = i;
+                    castShadows.Add(shadowCast);
+                    mainTexturePaths.Add(baseMapPath);
                     normalMapPaths.Add(normalMapPath);
-                
-                    var color = Color.white;
-                    if (material != null)
-                    {
-                        if (material.HasColor("_BaseColor")) color = material.GetColor("_BaseColor");
-                        else if (material.HasColor("_Color")) color = material.GetColor("_Color");
-                    }
-                    baseColors[j, 0] = color.r;
-                    baseColors[j, 1] = color.g;
-                    baseColors[j, 2] = color.b;
-                    baseColors[j, 3] = color.a;
-                    
-                    if (material != null)
-                        metallics[j, 0] = material.HasFloat("_Metallic") ? material.GetFloat("_Metallic") : 0;
+                    baseColors[triIndex, 0] = color.r;
+                    baseColors[triIndex, 1] = color.g;
+                    baseColors[triIndex, 2] = color.b;
+                    baseColors[triIndex, 3] = color.a;
+                    metallics[triIndex, 0] = metallic;
+                    smoothness[triIndex, 0] = smoothnes;
+                    renderQueues[triIndex, 0] = renderQueue;
                 }
+                accumulatedTriangleCount += triCount;
             }
             var materialAttribute = new StringAttribute("shop_materialpath", materials.ToArray());
             var meshNameAttribute = new StringAttribute("meshName", meshNames.ToArray());
@@ -206,6 +202,8 @@ namespace MeshToGeoConverter
             var normalMapPathAttribute = new StringAttribute("normalMap", normalMapPaths.ToArray());
             var baseColorAttribute = new FloatAttribute("baseColor", baseColors);
             var metallicAttribute = new FloatAttribute("metallic", metallics);
+            var smoothnessAttribute = new FloatAttribute("smoothness", smoothness);
+            var queueAttribute = new IntAttribute("queue", renderQueues);
             PrimitiveAttributes.Add(materialAttribute);
             PrimitiveAttributes.Add(meshNameAttribute);
             PrimitiveAttributes.Add(castShadowAttribute);
@@ -214,6 +212,8 @@ namespace MeshToGeoConverter
             PrimitiveAttributes.Add(normalMapPathAttribute);
             PrimitiveAttributes.Add(baseColorAttribute);
             PrimitiveAttributes.Add(metallicAttribute);
+            PrimitiveAttributes.Add(smoothnessAttribute);
+            PrimitiveAttributes.Add(queueAttribute);
         }
         
         Vector3 GetWorldPosition(Vector3 localPosition)
@@ -223,6 +223,52 @@ namespace MeshToGeoConverter
         Vector3 GetWorldDirection(Vector3 localDirection)
         {
             return _meshRenderer.transform.TransformDirection(localDirection);
+        }
+        private int MaterialQueue(Material material)
+        {
+            if (material == null) return 2000;
+            var renderQueue = material.renderQueue;
+            if (renderQueue <= 0)
+            {
+                renderQueue = 2000;
+                // if (material.HasProperty("_QueueOffset") && material.HasProperty("_Surface"))
+                // {
+                //     var queueOffset = material.GetFloat("_QueueOffset");
+                //     var surfaceType = material.GetFloat("_Surface");
+                // }
+            }
+            return renderQueue;
+        }
+        private float MaterialFloat(Material material, string[] propertyNames)
+        {
+            if (material == null) return 0;
+            foreach (var propertyName in propertyNames)
+            {
+                if (!material.HasProperty(propertyName)) continue;
+                return material.GetFloat(propertyName);
+            }
+            return 0;
+        }
+        Color MaterialColor(Material material, string[] propertyNames)
+        {
+            if (material == null) return Color.white;
+            foreach (var propertyName in propertyNames)
+            {
+                if (!material.HasProperty(propertyName)) continue;
+                return material.GetColor(propertyName);
+            }
+            return Color.white;
+        }
+        string MaterialTextureAbsolutePath(Material material, string[] propertyNames)
+        {
+            if (material == null) return "";
+            foreach (var propertyName in propertyNames)
+            {
+                if (!material.HasProperty(propertyName)) continue;
+                var texture = material.GetTexture(propertyName);
+                return TextureAbsolutePath(texture);
+            }
+            return "";
         }
         string TextureAbsolutePath(Texture texture)
         {
