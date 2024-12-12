@@ -10,11 +10,13 @@ namespace MeshToGeoConverter
 {
     public class MeshToGeoConverter
     {
-        private MeshRenderer _meshRenderer;
-        private Mesh _mesh; 
         public List<Attribute> PointAttributes = new();
         public List<Attribute> VertexAttributes = new();
         public List<Attribute> PrimitiveAttributes = new();
+        public List<Attribute> DetailAttributes = new();
+        
+        private MeshRenderer _meshRenderer;
+        private Mesh _mesh; 
         private int[] indices;
         private int pointCount = 0;
         bool outputNaively = false;
@@ -26,12 +28,11 @@ namespace MeshToGeoConverter
             
             // point attributes
             _meshRenderer = meshRenderer;
-            var filter = _meshRenderer.GetComponent<MeshFilter>();
-            _mesh = filter.sharedMesh;
-            if(_mesh == null)
-                throw new ArgumentException($"{meshRenderer.name}:Mesh is null");
-            if(_mesh.vertices == null || _mesh.vertices.Length == 0)
-                throw new ArgumentException($"{meshRenderer.name} {_mesh.name}: Mesh has no vertices");
+            _mesh = _meshRenderer?.GetComponent<MeshFilter>()?.sharedMesh;
+            
+            if(_mesh == null) throw new ArgumentException($"{meshRenderer.name}:Mesh is null");
+            if(_mesh.vertices == null || _mesh.vertices.Length == 0) throw new ArgumentException($"{meshRenderer.name} {_mesh.name}: Mesh has no vertices");
+            
             var verts = _mesh.vertices;
             var norms = _mesh.normals;
             var basMeshUV = _mesh.uv;
@@ -155,10 +156,11 @@ namespace MeshToGeoConverter
             var normalMapPaths = new List<string>(triangleCount);
             var baseColors = new float[triangleCount,4];
             var metallics = new float[triangleCount,1];
-            var smoothness = new float[triangleCount,1];
+            var smoothnesses = new float[triangleCount,1];
             var renderQueues = new int[triangleCount,1];
-            var subMeshId = new int[triangleCount,1];
             var shadowCast = meshRenderer.shadowCastingMode.ToString();
+            var tag = meshRenderer.tag;
+            var layer = LayerMask.LayerToName(meshRenderer.gameObject.layer);
             
             var accumulatedTriangleCount = 0;
             for (var i = 0; i < subMeshCount; i++)
@@ -180,7 +182,6 @@ namespace MeshToGeoConverter
                     var triIndex = accumulatedTriangleCount + j;
                     materials.Add(materialName);
                     meshNames.Add(meshName);
-                    subMeshId[triIndex,0] = i;
                     castShadows.Add(shadowCast);
                     mainTexturePaths.Add(baseMapPath);
                     normalMapPaths.Add(normalMapPath);
@@ -189,31 +190,30 @@ namespace MeshToGeoConverter
                     baseColors[triIndex, 2] = color.b;
                     baseColors[triIndex, 3] = color.a;
                     metallics[triIndex, 0] = metallic;
-                    smoothness[triIndex, 0] = smoothnes;
+                    smoothnesses[triIndex, 0] = smoothnes;
                     renderQueues[triIndex, 0] = renderQueue;
                 }
                 accumulatedTriangleCount += triCount;
             }
             var materialAttribute = new StringAttribute("shop_materialpath", materials.ToArray());
             var meshNameAttribute = new StringAttribute("meshName", meshNames.ToArray());
-            var castShadowAttribute = new StringAttribute("castShadow", castShadows.ToArray());
-            var subMeshIdAttribute = new IntAttribute("subMeshId", subMeshId);
             var mainTexturePathAttribute = new StringAttribute("baseMap", mainTexturePaths.ToArray());
             var normalMapPathAttribute = new StringAttribute("normalMap", normalMapPaths.ToArray());
             var baseColorAttribute = new FloatAttribute("baseColor", baseColors);
             var metallicAttribute = new FloatAttribute("metallic", metallics);
-            var smoothnessAttribute = new FloatAttribute("smoothness", smoothness);
+            var smoothnessAttribute = new FloatAttribute("smoothness", smoothnesses);
             var queueAttribute = new IntAttribute("queue", renderQueues);
             PrimitiveAttributes.Add(materialAttribute);
             PrimitiveAttributes.Add(meshNameAttribute);
-            PrimitiveAttributes.Add(castShadowAttribute);
-            PrimitiveAttributes.Add(subMeshIdAttribute);
             PrimitiveAttributes.Add(mainTexturePathAttribute);
             PrimitiveAttributes.Add(normalMapPathAttribute);
             PrimitiveAttributes.Add(baseColorAttribute);
             PrimitiveAttributes.Add(metallicAttribute);
             PrimitiveAttributes.Add(smoothnessAttribute);
             PrimitiveAttributes.Add(queueAttribute);
+            DetailAttributes.Add(new StringAttribute("shadowCast", new []{shadowCast}));
+            DetailAttributes.Add(new StringAttribute("tag", new []{tag}));
+            DetailAttributes.Add(new StringAttribute("layer", new []{layer}));
         }
         
         Vector3 GetWorldPosition(Vector3 localPosition)
@@ -346,6 +346,13 @@ namespace MeshToGeoConverter
                 {
                     sb.AppendLine("\"primitiveattributes\",[");
                     MakeAttributeContent(sb, PrimitiveAttributes);
+                    sb.AppendLine("],");
+                }
+                
+                if (0 < DetailAttributes.Count)
+                {
+                    sb.AppendLine("\"globalattributes\",[");
+                    MakeAttributeContent(sb, DetailAttributes);
                     sb.AppendLine("],");
                 }
             
